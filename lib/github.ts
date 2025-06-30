@@ -40,8 +40,17 @@ interface FileAnalysis {
 export class GitHubAnalyzer {
   private baseUrl = "https://api.github.com";
   private token = process.env.GITHUB_TOKEN;
+  private requestCount = 0;
+  private lastRequestTime = 0;
 
-  private async fetchWithAuth(url: string) {
+  private async fetchWithAuth(url: string, retries = 3) {
+    // Rate limiting: GitHub allows 5000 requests per hour for authenticated users
+    const now = Date.now();
+    if (this.requestCount >= 100 && now - this.lastRequestTime < 60000) {
+      // Wait if we've made too many requests in the last minute
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
     const headers: Record<string, string> = {
       Accept: "application/vnd.github.v3+json",
       "User-Agent": "QuantaCode-Analyzer",
@@ -51,28 +60,59 @@ export class GitHubAnalyzer {
       headers["Authorization"] = `token ${this.token}`;
     }
 
-    const response = await fetch(url, { headers });
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const response = await fetch(url, {
+          headers,
+        });
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(
-          "Repository not found. Please check the URL or ensure the repository is public."
-        );
-      } else if (response.status === 403) {
-        throw new Error(
-          "Access denied. The repository may be private or rate limit exceeded."
-        );
-      } else if (response.status === 401) {
-        throw new Error(
-          "Authentication failed. Please check your GitHub token."
+        this.requestCount++;
+        this.lastRequestTime = now;
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error(
+              "Repository not found. Please check the URL or ensure the repository is public."
+            );
+          } else if (response.status === 403) {
+            const rateLimitRemaining = response.headers.get(
+              "x-ratelimit-remaining"
+            );
+            if (rateLimitRemaining === "0") {
+              throw new Error(
+                "GitHub API rate limit exceeded. Please try again later or add a GitHub token."
+              );
+            }
+            throw new Error(
+              "Access denied. The repository may be private or rate limit exceeded."
+            );
+          } else if (response.status === 401) {
+            throw new Error(
+              "Authentication failed. Please check your GitHub token."
+            );
+          } else if (response.status >= 500) {
+            // Server error, retry
+            if (attempt < retries - 1) {
+              await new Promise((resolve) =>
+                setTimeout(resolve, 1000 * (attempt + 1))
+              );
+              continue;
+            }
+            throw new Error(`GitHub API server error: ${response.status}`);
+          }
+          throw new Error(
+            `GitHub API error: ${response.status} ${response.statusText}`
+          );
+        }
+
+        return response.json();
+      } catch (error) {
+        if (attempt === retries - 1) throw error;
+        await new Promise((resolve) =>
+          setTimeout(resolve, 1000 * (attempt + 1))
         );
       }
-      throw new Error(
-        `GitHub API error: ${response.status} ${response.statusText}`
-      );
     }
-
-    return response.json();
   }
 
   async getRepoInfo(owner: string, repo: string): Promise<GitHubRepo> {
@@ -128,7 +168,8 @@ export class GitHubAnalyzer {
     owner: string,
     repo: string,
     path: string = "",
-    maxDepth: number = 3
+    maxDepth: number = 3,
+    maxFiles: number = 200
   ): Promise<GitHubFile[]> {
     if (maxDepth <= 0) return [];
 
@@ -136,6 +177,8 @@ export class GitHubAnalyzer {
     const allFiles: GitHubFile[] = [];
 
     for (const file of files) {
+      if (allFiles.length >= maxFiles) break;
+
       if (file.type === "file") {
         allFiles.push(file);
       } else if (file.type === "dir" && !this.shouldSkipDirectory(file.name)) {
@@ -143,7 +186,8 @@ export class GitHubAnalyzer {
           owner,
           repo,
           file.path,
-          maxDepth - 1
+          maxDepth - 1,
+          maxFiles - allFiles.length
         );
         allFiles.push(...subFiles);
       }
@@ -165,28 +209,58 @@ export class GitHubAnalyzer {
       ".pytest_cache",
       "venv",
       "env",
+      "vendor",
+      "target",
+      "bin",
+      "obj",
+      ".vscode",
+      ".idea",
     ];
     return skipDirs.includes(dirName) || dirName.startsWith(".");
   }
 
   async analyzeRepository(owner: string, repo: string) {
-    const repoInfo = await this.getRepoInfo(owner, repo);
-    const allFiles = await this.getAllFiles(owner, repo);
+    console.log(`🔬 Starting repository analysis for ${owner}/${repo}`);
 
-    // Get key files
-    const packageJson = await this.getPackageJson(owner, repo);
-    const readme = await this.getFileContent(owner, repo, "README.md");
+    try {
+      const repoInfo = await this.getRepoInfo(owner, repo);
+      console.log(
+        `📊 Repository info retrieved: ${repoInfo.language}, ${repoInfo.stargazers_count} stars`
+      );
 
-    // Get detailed file analysis for code files
-    const codeFiles = await this.getDetailedCodeFiles(owner, repo, allFiles);
+      const allFiles = await this.getAllFiles(owner, repo, "", 3, 150);
+      console.log(`📁 Found ${allFiles.length} files`);
 
-    return {
-      repoInfo,
-      packageJson,
-      readme,
-      files: allFiles,
-      codeFiles,
-    };
+      // Get key files with timeout protection
+      const [packageJson, readme] = await Promise.allSettled([
+        this.getPackageJson(owner, repo),
+        this.getFileContent(owner, repo, "README.md"),
+      ]);
+
+      // Get detailed file analysis for code files
+      const codeFiles = await this.getDetailedCodeFiles(
+        owner,
+        repo,
+        allFiles,
+        30
+      );
+      console.log(`💻 Analyzed ${codeFiles.length} code files`);
+
+      return {
+        repoInfo,
+        packageJson:
+          packageJson.status === "fulfilled" ? packageJson.value : null,
+        readme: readme.status === "fulfilled" ? readme.value : "",
+        files: allFiles,
+        codeFiles,
+      };
+    } catch (error) {
+      console.error(
+        `❌ Repository analysis failed for ${owner}/${repo}:`,
+        error
+      );
+      throw error;
+    }
   }
 
   private async getPackageJson(
@@ -205,7 +279,7 @@ export class GitHubAnalyzer {
     owner: string,
     repo: string,
     files: GitHubFile[],
-    maxFiles = 50
+    maxFiles = 30
   ): Promise<FileAnalysis[]> {
     const codeExtensions = [
       ".js",
@@ -226,31 +300,67 @@ export class GitHubAnalyzer {
       ".scss",
       ".html",
       ".vue",
+      ".json",
+      ".md",
     ];
+
     const codeFiles = files
       .filter(
         (file) =>
           file.type === "file" &&
           codeExtensions.some((ext) => file.name.endsWith(ext)) &&
           file.size < 100000 && // Skip very large files
-          !file.path.includes("test") && // Skip test files for now
-          !file.path.includes("spec") &&
           !file.path.includes(".min.") && // Skip minified files
           !file.path.includes("vendor") &&
-          !file.path.includes("node_modules")
+          !file.path.includes("node_modules") &&
+          !this.shouldSkipDirectory(file.path.split("/")[0])
       )
+      .sort((a, b) => {
+        // Prioritize important files
+        const importantFiles = [
+          "package.json",
+          "README.md",
+          "index.js",
+          "index.ts",
+          "main.py",
+          "app.py",
+        ];
+        const aImportant = importantFiles.includes(a.name);
+        const bImportant = importantFiles.includes(b.name);
+        if (aImportant && !bImportant) return -1;
+        if (!aImportant && bImportant) return 1;
+        return b.size - a.size; // Then by size
+      })
       .slice(0, maxFiles);
 
     const results: FileAnalysis[] = [];
-    for (const file of codeFiles) {
-      try {
-        const content = await this.getFileContent(owner, repo, file.path);
-        if (content) {
-          const analysis = this.analyzeFile(file, content);
-          results.push(analysis);
+    const batchSize = 5; // Process files in batches to avoid overwhelming the API
+
+    for (let i = 0; i < codeFiles.length; i += batchSize) {
+      const batch = codeFiles.slice(i, i + batchSize);
+      const batchPromises = batch.map(async (file) => {
+        try {
+          const content = await this.getFileContent(owner, repo, file.path);
+          if (content && content.length > 0) {
+            return this.analyzeFile(file, content);
+          }
+          return null;
+        } catch (error) {
+          console.warn(`Could not fetch ${file.path}:`, error);
+          return null;
         }
-      } catch (error) {
-        console.warn(`Could not fetch ${file.path}:`, error);
+      });
+
+      const batchResults = await Promise.allSettled(batchPromises);
+      batchResults.forEach((result) => {
+        if (result.status === "fulfilled" && result.value) {
+          results.push(result.value);
+        }
+      });
+
+      // Small delay between batches to be respectful to the API
+      if (i + batchSize < codeFiles.length) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
@@ -297,7 +407,7 @@ export class GitHubAnalyzer {
 
     return {
       path: file.path,
-      content,
+      content: content.slice(0, 2000), // Limit content size for performance
       size: file.size,
       language,
       issues,

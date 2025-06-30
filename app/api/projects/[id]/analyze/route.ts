@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { analyzeRepository, saveAnalysis } from "@/lib/analysis";
+import { analyzeRepository } from "@/lib/analysis";
 
 export async function POST(
   req: NextRequest,
@@ -34,8 +34,10 @@ export async function POST(
       },
     });
 
-    // Start analysis in background
-    analyzeInBackground(project, analysis.id);
+    // Start analysis in background - don't await it
+    analyzeInBackground(project, analysis.id).catch((error) => {
+      console.error("Background analysis failed:", error);
+    });
 
     return NextResponse.json({
       message: "Analysis started",
@@ -53,6 +55,8 @@ export async function POST(
 
 async function analyzeInBackground(project: any, analysisId: string) {
   try {
+    console.log(`🔬 Starting background analysis for project: ${project.name}`);
+
     // Update project with repo info
     const match = project.repoUrl.match(/github\.com\/([^\/]+)\/([^\/\?]+)/);
     if (match) {
@@ -63,8 +67,41 @@ async function analyzeInBackground(project: any, analysisId: string) {
       });
     }
 
-    // Perform analysis
-    const analysisResult = await analyzeRepository(project.repoUrl);
+    // Perform analysis with timeout protection
+    const analysisPromise = analyzeRepository(project.repoUrl);
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("Analysis timeout after 15 minutes")),
+        15 * 60 * 1000
+      );
+    });
+
+    const analysisResult = (await Promise.race([
+      analysisPromise,
+      timeoutPromise,
+    ])) as {
+      documentationScore: number;
+      dependencyScore: number;
+      codeQualityScore: number;
+      securityScore: number;
+      testCoverageScore: number;
+      overallHealthScore: number;
+      issues: any;
+      recommendations: any;
+      strengths: any;
+      totalFiles: number;
+      linesOfCode: number;
+      documentedFunctions: number;
+      totalFunctions: number;
+      totalDependencies: number;
+      outdatedDependencies: number;
+      vulnerabilities: any;
+      aiSummary: string;
+      complexityAnalysis: any;
+      improvementPlan: any;
+    };
+
+    console.log(`✅ Analysis completed for project: ${project.name}`);
 
     // Update analysis with results
     await prisma.analysis.update({
@@ -92,6 +129,8 @@ async function analyzeInBackground(project: any, analysisId: string) {
         status: "completed",
       },
     });
+
+    console.log(`🎉 Analysis results saved for project: ${project.name}`);
   } catch (error) {
     console.error("Background analysis failed:", error);
 
@@ -101,7 +140,7 @@ async function analyzeInBackground(project: any, analysisId: string) {
       data: {
         status: "failed",
         aiSummary:
-          "Analysis failed. Please check the repository URL and try again.",
+          "Analysis failed. Please check the repository URL and try again. If the issue persists, the repository might be too large or have access restrictions.",
       },
     });
   }
