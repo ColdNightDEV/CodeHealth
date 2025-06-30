@@ -97,7 +97,7 @@ export async function GET() {
     return new NextResponse(csvContent, {
       headers: {
         "Content-Type": "text/csv",
-        "Content-Disposition": `attachment; filename="codehealth-analytics-${
+        "Content-Disposition": `attachment; filename="QuantaCode-analytics-${
           new Date().toISOString().split("T")[0]
         }.csv"`,
       },

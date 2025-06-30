@@ -151,7 +151,7 @@ export default function AdminPage() {
 
     if (status === "authenticated") {
       // Check if user is admin
-      if (session?.user?.email !== "admin@codehealth.com") {
+      if (session?.user?.email !== "admin@QuantaCode.com") {
         router.push("/dashboard");
         toast.error("Access denied. Admin privileges required.");
         return;
@@ -226,7 +226,7 @@ export default function AdminPage() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `codehealth-analytics-${
+        a.download = `QuantaCode-analytics-${
           new Date().toISOString().split("T")[0]
         }.csv`;
         document.body.appendChild(a);

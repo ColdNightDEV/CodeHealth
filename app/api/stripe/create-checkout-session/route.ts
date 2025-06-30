@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { priceId } = await req.json();
+    const { priceId, promotionCode } = await req.json();
 
     if (!priceId) {
       return NextResponse.json(
@@ -47,8 +47,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Create checkout session
-    const checkoutSession = await stripe.checkout.sessions.create({
+    // Prepare checkout session data
+    const checkoutSessionData: any = {
       customer: customerId,
       payment_method_types: ["card"],
       line_items: [
@@ -62,9 +62,62 @@ export async function POST(req: NextRequest) {
       cancel_url: `${process.env.NEXTAUTH_URL}/billing?canceled=true`,
       allow_promotion_codes: true,
       billing_address_collection: "required",
+      customer_update: {
+        address: "auto",
+        name: "auto",
+      },
       metadata: {
         userId: user.id,
+        userEmail: user.email,
       },
+      subscription_data: {
+        metadata: {
+          userId: user.id,
+          userEmail: user.email,
+        },
+      },
+    };
+
+    // Add promotion code if provided
+    if (promotionCode) {
+      try {
+        // Validate promotion code exists and is active
+        const promotionCodes = await stripe.promotionCodes.list({
+          code: promotionCode,
+          active: true,
+          limit: 1,
+        });
+
+        if (promotionCodes.data.length > 0) {
+          checkoutSessionData.discounts = [
+            {
+              promotion_code: promotionCodes.data[0].id,
+            },
+          ];
+          checkoutSessionData.metadata.promotion_code = promotionCode;
+          console.log(`✅ Applied promotion code: ${promotionCode}`);
+        } else {
+          console.log(
+            `⚠️ Invalid or inactive promotion code: ${promotionCode}`
+          );
+        }
+      } catch (error) {
+        console.error("Error applying promotion code:", error);
+        // Continue without promotion code rather than failing
+      }
+    }
+
+    // Create checkout session
+    const checkoutSession = await stripe.checkout.sessions.create(
+      checkoutSessionData
+    );
+
+    console.log(`✅ Created checkout session: ${checkoutSession.id}`, {
+      customerId,
+      userId: user.id,
+      userEmail: user.email,
+      promotionCode: promotionCode || "none",
+      hasDiscount: !!checkoutSessionData.discounts,
     });
 
     return NextResponse.json({

@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
 
   try {
     console.log(`🔄 Processing webhook event: ${event.type}`);
+    console.log(`📋 Event ID: ${event.id}`);
 
     switch (event.type) {
       case "checkout.session.completed":
@@ -81,32 +82,240 @@ export async function POST(req: NextRequest) {
   }
 }
 
+async function findUserByMultipleStrategies(
+  customerId?: string,
+  email?: string,
+  sessionId?: string,
+  metadata?: any
+): Promise<any> {
+  console.log(`🔍 Looking up user with multiple strategies:`, {
+    customerId,
+    email,
+    sessionId,
+    metadata,
+  });
+
+  let user = null;
+
+  // Strategy 1: By customer ID
+  if (customerId) {
+    user = await prisma.user.findFirst({
+      where: { customerId },
+    });
+    if (user) {
+      console.log(`✅ Found user by customer ID: ${user.email}`);
+      return user;
+    }
+  }
+
+  // Strategy 2: By email
+  if (email) {
+    user = await prisma.user.findFirst({
+      where: { email },
+    });
+    if (user) {
+      console.log(`✅ Found user by email: ${user.email}`);
+      // Update customer ID if missing
+      if (customerId && !user.customerId) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { customerId },
+        });
+        console.log(`✅ Updated user with customer ID: ${customerId}`);
+      }
+      return user;
+    }
+  }
+
+  // Strategy 3: By metadata user ID
+  if (metadata?.userId) {
+    user = await prisma.user.findUnique({
+      where: { id: metadata.userId },
+    });
+    if (user) {
+      console.log(`✅ Found user by metadata ID: ${user.email}`);
+      // Update customer ID and email if missing
+      const updateData: any = {};
+      if (customerId && !user.customerId) {
+        updateData.customerId = customerId;
+      }
+      if (email && user.email !== email) {
+        updateData.email = email;
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: updateData,
+        });
+        console.log(`✅ Updated user with missing data:`, updateData);
+      }
+      return user;
+    }
+  }
+
+  // Strategy 4: By metadata userEmail
+  if (metadata?.userEmail) {
+    user = await prisma.user.findFirst({
+      where: { email: metadata.userEmail },
+    });
+    if (user) {
+      console.log(`✅ Found user by metadata email: ${user.email}`);
+      // Update customer ID if missing
+      if (customerId && !user.customerId) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { customerId },
+        });
+        console.log(`✅ Updated user with customer ID: ${customerId}`);
+      }
+      return user;
+    }
+  }
+
+  // Strategy 5: If we have a session ID, try to get it from Stripe and extract more info
+  if (sessionId) {
+    try {
+      const session = await stripe.checkout.sessions.retrieve(sessionId, {
+        expand: ["customer"],
+      });
+
+      const customer = session.customer as Stripe.Customer;
+      if (customer && !customer.deleted && customer.email) {
+        user = await prisma.user.findFirst({
+          where: { email: customer.email },
+        });
+        if (user) {
+          console.log(`✅ Found user by session customer email: ${user.email}`);
+          // Update customer ID if missing
+          if (!user.customerId) {
+            user = await prisma.user.update({
+              where: { id: user.id },
+              data: { customerId: customer.id },
+            });
+            console.log(
+              `✅ Updated user with customer ID from session: ${customer.id}`
+            );
+          }
+          return user;
+        }
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        console.error("Error retrieving customer:", error.message);
+      } else {
+        console.error("Error retrieving customer:", String(error));
+      }
+    }
+  }
+
+  console.log(`❌ User not found with any strategy`);
+  return null;
+}
+
 async function handleCheckoutSessionCompleted(
   session: Stripe.Checkout.Session
 ) {
   console.log("🛒 Processing checkout session completed:", session.id);
+  console.log("📋 Session details:", {
+    id: session.id,
+    customer: session.customer,
+    customer_email: session.customer_email,
+    customer_details: session.customer_details,
+    subscription: session.subscription,
+    metadata: session.metadata,
+    payment_status: session.payment_status,
+    amount_total: session.amount_total,
+  });
 
-  const userId = session.metadata?.userId;
+  // Get customer email from multiple sources
+  const customerEmail =
+    session.customer_email ||
+    session.customer_details?.email ||
+    session.metadata?.userEmail;
 
-  if (!userId) {
-    console.error("❌ No userId in checkout session metadata");
+  const customerId = session.customer as string;
+
+  console.log(`📧 Customer email: ${customerEmail}`);
+  console.log(`👤 Customer ID: ${customerId}`);
+
+  // Use enhanced user lookup
+  const user = await findUserByMultipleStrategies(
+    customerId,
+    customerEmail,
+    session.id,
+    session.metadata
+  );
+
+  if (!user) {
+    console.error("❌ No user found for checkout session after all strategies");
+    console.log("🔍 Session debug info:", {
+      id: session.id,
+      customer: customerId,
+      email: customerEmail,
+      metadata: session.metadata,
+      customer_details: session.customer_details,
+    });
+
+    // Try one more time with expanded customer data
+    if (customerId) {
+      try {
+        const customer = await stripe.customers.retrieve(customerId);
+        if (!customer.deleted && customer.email) {
+          console.log(
+            `🔄 Trying with expanded customer email: ${customer.email}`
+          );
+          const userByCustomerEmail = await prisma.user.findFirst({
+            where: { email: customer.email },
+          });
+
+          if (userByCustomerEmail) {
+            console.log(
+              `✅ Found user with expanded customer data: ${userByCustomerEmail.email}`
+            );
+            // Update with customer ID
+            const updatedUser = await prisma.user.update({
+              where: { id: userByCustomerEmail.id },
+              data: { customerId },
+            });
+            console.log(`✅ Updated user with customer ID: ${customerId}`);
+            await processSubscriptionForUser(updatedUser, session);
+            return;
+          }
+        }
+      } catch (error) {
+        console.error("Error retrieving customer:", error);
+      }
+    }
+
     return;
   }
 
-  console.log(`👤 Found userId in metadata: ${userId}`);
+  await processSubscriptionForUser(user, session);
+}
+
+async function processSubscriptionForUser(
+  user: any,
+  session: Stripe.Checkout.Session
+) {
+  console.log(
+    `👤 Processing subscription for user: ${user.email} (${user.id})`
+  );
 
   // Track revenue event
   await trackRevenueEvent({
     type: "checkout_completed",
     amount: session.amount_total || 0,
     currency: session.currency || "usd",
-    userId,
+    userId: user.id,
     stripeEventId: session.id,
     stripeCustomerId: session.customer as string,
     description: "Checkout session completed",
     metadata: {
       sessionId: session.id,
       paymentStatus: session.payment_status,
+      discountAmount: session.total_details?.amount_discount || 0,
+      promotionCode: session.metadata?.promotion_code || null,
     },
   });
 
@@ -114,7 +323,10 @@ async function handleCheckoutSessionCompleted(
   if (session.subscription) {
     console.log(`🔄 Retrieving subscription: ${session.subscription}`);
     const subscription = await stripe.subscriptions.retrieve(
-      session.subscription as string
+      session.subscription as string,
+      {
+        expand: ["discount.coupon", "items.data.price"],
+      }
     );
 
     console.log(`📊 Subscription details:`, {
@@ -123,16 +335,25 @@ async function handleCheckoutSessionCompleted(
       current_period_start: new Date(subscription.current_period_start * 1000),
       current_period_end: new Date(subscription.current_period_end * 1000),
       customer: subscription.customer,
+      discount: subscription.discount
+        ? {
+            coupon: subscription.discount.coupon.name,
+            percent_off: subscription.discount.coupon.percent_off,
+            duration: subscription.discount.coupon.duration,
+            duration_in_months: subscription.discount.coupon.duration_in_months,
+          }
+        : null,
     });
 
     // Update user with subscription info
     const updatedUser = await prisma.user.update({
-      where: { id: userId },
+      where: { id: user.id },
       data: {
         subscriptionId: subscription.id,
         subscriptionStatus: "premium",
         subscriptionStart: new Date(subscription.current_period_start * 1000),
         subscriptionEnd: new Date(subscription.current_period_end * 1000),
+        customerId: session.customer as string, // Ensure customer ID is set
       },
     });
 
@@ -141,15 +362,18 @@ async function handleCheckoutSessionCompleted(
       type: "subscription_created",
       amount: subscription.items.data[0]?.price.unit_amount || 0,
       currency: subscription.currency,
-      userId,
+      userId: user.id,
       stripeEventId: subscription.id,
-      stripeCustomerId: subscription.customer as string,
+      stripeCustomerId: session.customer as string,
       stripeSubscriptionId: subscription.id,
       description: "New subscription created",
       metadata: {
         subscriptionId: subscription.id,
         priceId: subscription.items.data[0]?.price.id,
         status: subscription.status,
+        hasDiscount: !!subscription.discount,
+        discountPercent: subscription.discount?.coupon.percent_off || 0,
+        promotionCode: session.metadata?.promotion_code || null,
       },
     });
 
@@ -160,6 +384,7 @@ async function handleCheckoutSessionCompleted(
       subscriptionId: updatedUser.subscriptionId,
       subscriptionStart: updatedUser.subscriptionStart,
       subscriptionEnd: updatedUser.subscriptionEnd,
+      customerId: updatedUser.customerId,
     });
   } else {
     console.log("⚠️ No subscription found in checkout session");
@@ -169,65 +394,99 @@ async function handleCheckoutSessionCompleted(
 async function handleSubscriptionChange(subscription: Stripe.Subscription) {
   console.log("🔄 Processing subscription change:", subscription.id);
 
-  const customer = await stripe.customers.retrieve(
-    subscription.customer as string
+  const customerId = subscription.customer as string;
+
+  // Expand subscription to get discount info
+  const expandedSubscription = await stripe.subscriptions.retrieve(
+    subscription.id,
+    {
+      expand: ["discount.coupon", "customer"],
+    }
   );
 
-  if (customer.deleted) {
-    console.error("❌ Customer was deleted");
+  const customer = expandedSubscription.customer as Stripe.Customer;
+
+  if (
+    !expandedSubscription.created ||
+    customer.deleted ||
+    customer.id !== customerId
+  ) {
+    console.error("❌ Customer was deleted or not found");
     return;
   }
 
-  console.log(`👤 Found customer: ${customer.id}`);
+  console.log(`👤 Found customer: ${customer.id} (${customer.email})`);
 
-  const user = await prisma.user.findFirst({
-    where: { customerId: customer.id },
-  });
+  // Use enhanced user lookup
+  const user = await findUserByMultipleStrategies(
+    customer.id,
+    customer.email || undefined,
+    undefined,
+    undefined
+  );
 
   if (!user) {
-    console.error(`❌ User not found for customer: ${customer.id}`);
+    console.error(
+      `❌ User not found for customer: ${customer.id} (${customer.email})`
+    );
     return;
   }
 
   console.log(`👤 Found user: ${user.id} (${user.email})`);
 
   const isActive =
-    subscription.status === "active" || subscription.status === "trialing";
-  const subscriptionStatus = isActive ? "premium" : subscription.status;
+    expandedSubscription.status === "active" ||
+    expandedSubscription.status === "trialing";
+  const subscriptionStatus = isActive ? "premium" : expandedSubscription.status;
 
   console.log(`📊 Subscription update details:`, {
-    subscriptionId: subscription.id,
-    status: subscription.status,
+    subscriptionId: expandedSubscription.id,
+    status: expandedSubscription.status,
     isActive,
     subscriptionStatus,
-    current_period_start: new Date(subscription.current_period_start * 1000),
-    current_period_end: new Date(subscription.current_period_end * 1000),
+    current_period_start: new Date(
+      expandedSubscription.current_period_start * 1000
+    ),
+    current_period_end: new Date(
+      expandedSubscription.current_period_end * 1000
+    ),
+    discount: expandedSubscription.discount
+      ? {
+          coupon: expandedSubscription.discount.coupon.name,
+          percent_off: expandedSubscription.discount.coupon.percent_off,
+        }
+      : null,
   });
 
   const updatedUser = await prisma.user.update({
     where: { id: user.id },
     data: {
-      subscriptionId: subscription.id,
+      subscriptionId: expandedSubscription.id,
       subscriptionStatus,
-      subscriptionStart: new Date(subscription.current_period_start * 1000),
-      subscriptionEnd: new Date(subscription.current_period_end * 1000),
+      subscriptionStart: new Date(
+        expandedSubscription.current_period_start * 1000
+      ),
+      subscriptionEnd: new Date(expandedSubscription.current_period_end * 1000),
+      customerId: customer.id, // Ensure customer ID is always set
     },
   });
 
   // Track subscription update revenue event
   await trackRevenueEvent({
     type: "subscription_updated",
-    amount: subscription.items.data[0]?.price.unit_amount || 0,
-    currency: subscription.currency,
+    amount: expandedSubscription.items.data[0]?.price.unit_amount || 0,
+    currency: expandedSubscription.currency,
     userId: user.id,
-    stripeEventId: subscription.id,
+    stripeEventId: expandedSubscription.id,
     stripeCustomerId: customer.id,
-    stripeSubscriptionId: subscription.id,
-    description: `Subscription ${subscription.status}`,
+    stripeSubscriptionId: expandedSubscription.id,
+    description: `Subscription ${expandedSubscription.status}`,
     metadata: {
-      subscriptionId: subscription.id,
-      status: subscription.status,
+      subscriptionId: expandedSubscription.id,
+      status: expandedSubscription.status,
       previousStatus: user.subscriptionStatus,
+      hasDiscount: !!expandedSubscription.discount,
+      discountPercent: expandedSubscription.discount?.coupon.percent_off || 0,
     },
   });
 
@@ -237,6 +496,7 @@ async function handleSubscriptionChange(subscription: Stripe.Subscription) {
     subscriptionStatus: updatedUser.subscriptionStatus,
     subscriptionStart: updatedUser.subscriptionStart,
     subscriptionEnd: updatedUser.subscriptionEnd,
+    customerId: updatedUser.customerId,
   });
 }
 
@@ -252,9 +512,12 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
     return;
   }
 
-  const user = await prisma.user.findFirst({
-    where: { customerId: customer.id },
-  });
+  const user = await findUserByMultipleStrategies(
+    customer.id,
+    customer.email || undefined,
+    undefined,
+    undefined
+  );
 
   if (!user) {
     console.error(`❌ User not found for customer: ${customer.id}`);
@@ -318,6 +581,11 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
           invoiceId: invoice.id,
           amountPaid: invoice.amount_paid,
           billingReason: invoice.billing_reason,
+          discountAmount:
+            invoice.total_discount_amounts?.reduce(
+              (sum, discount) => sum + discount.amount,
+              0
+            ) || 0,
         },
       });
     }
@@ -340,9 +608,12 @@ async function handlePaymentFailed(invoice: Stripe.Invoice) {
     return;
   }
 
-  const user = await prisma.user.findFirst({
-    where: { customerId: customer.id },
-  });
+  const user = await findUserByMultipleStrategies(
+    customer.id,
+    customer.email || undefined,
+    undefined,
+    undefined
+  );
 
   if (user) {
     console.log(`⚠️ Payment failed for user: ${user.email}`);
@@ -378,9 +649,12 @@ async function handleChargeDispute(dispute: Stripe.Dispute) {
     return;
   }
 
-  const user = await prisma.user.findFirst({
-    where: { customerId: customer.id },
-  });
+  const user = await findUserByMultipleStrategies(
+    customer.id,
+    customer.email || undefined,
+    undefined,
+    undefined
+  );
 
   if (user) {
     // Track dispute
@@ -414,9 +688,12 @@ async function handleTrialWillEnd(subscription: Stripe.Subscription) {
     return;
   }
 
-  const user = await prisma.user.findFirst({
-    where: { customerId: customer.id },
-  });
+  const user = await findUserByMultipleStrategies(
+    customer.id,
+    customer.email || undefined,
+    undefined,
+    undefined
+  );
 
   if (user) {
     console.log(`⏰ Trial ending soon for user: ${user.email}`);

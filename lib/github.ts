@@ -44,7 +44,7 @@ export class GitHubAnalyzer {
   private async fetchWithAuth(url: string) {
     const headers: Record<string, string> = {
       Accept: "application/vnd.github.v3+json",
-      "User-Agent": "CodeHealth-Analyzer",
+      "User-Agent": "QuantaCode-Analyzer",
     };
 
     if (this.token) {

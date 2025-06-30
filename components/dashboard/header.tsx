@@ -43,7 +43,7 @@ export function DashboardHeader() {
   };
 
   // Check if user is admin
-  const isAdmin = session?.user?.email === "admin@codehealth.com";
+  const isAdmin = session?.user?.email === "admin@QuantaCode.com";
 
   const navigationItems = [
     {
@@ -74,7 +74,7 @@ export function DashboardHeader() {
           <Link href="/dashboard" className="flex items-center space-x-2">
             <Activity className="h-6 w-6 sm:h-8 sm:w-8 text-purple-400" />
             <span className="text-xl sm:text-2xl font-bold text-white">
-              CodeHealth
+              QuantaCode
             </span>
           </Link>
 
@@ -127,7 +127,7 @@ export function DashboardHeader() {
                 <SheetHeader>
                   <SheetTitle className="text-white flex items-center">
                     <Activity className="h-5 w-5 mr-2 text-purple-400" />
-                    CodeHealth
+                    QuantaCode
                   </SheetTitle>
                 </SheetHeader>
 

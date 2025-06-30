@@ -280,7 +280,7 @@ export default function BillingPage() {
             Billing & Subscription
           </h1>
           <p className="text-slate-300 text-lg">
-            Manage your CodeHealth subscription powered by Stripe.
+            Manage your QuantaCode subscription powered by Stripe.
           </p>
         </div>
 
@@ -300,7 +300,7 @@ export default function BillingPage() {
                   </p>
                   <div className="flex flex-wrap gap-2 mt-2">
                     {[
-                      "CODEHEALTH2FREE",
+                      "QuantaCode2FREE",
                       "LAUNCH2024",
                       "FREEMONTHS",
                       "PREMIUM2FREE",
@@ -478,7 +478,7 @@ export default function BillingPage() {
                     Free Plan
                   </CardTitle>
                   <CardDescription className="text-slate-400">
-                    Perfect for trying out CodeHealth
+                    Perfect for trying out QuantaCode
                   </CardDescription>
                 </div>
                 <div className="text-right">

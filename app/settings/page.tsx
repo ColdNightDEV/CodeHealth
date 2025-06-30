@@ -129,7 +129,7 @@ export default function SettingsPage() {
     }
 
     // Load preferences from localStorage
-    const savedPreferences = localStorage.getItem("codehealth-preferences");
+    const savedPreferences = localStorage.getItem("QuantaCode-preferences");
     if (savedPreferences) {
       try {
         const preferences = JSON.parse(savedPreferences);
@@ -162,7 +162,7 @@ export default function SettingsPage() {
     try {
       // Save preferences to localStorage
       localStorage.setItem(
-        "codehealth-preferences",
+        "QuantaCode-preferences",
         JSON.stringify(settings.preferences)
       );
 
@@ -189,7 +189,7 @@ export default function SettingsPage() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `codehealth-data-${
+        a.download = `QuantaCode-data-${
           new Date().toISOString().split("T")[0]
         }.json`;
         document.body.appendChild(a);
@@ -500,7 +500,7 @@ export default function SettingsPage() {
                   Application Preferences
                 </CardTitle>
                 <CardDescription className="text-slate-400">
-                  Customize your CodeHealth experience.
+                  Customize your QuantaCode experience.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -633,7 +633,7 @@ export default function SettingsPage() {
                   <div>
                     <h4 className="text-white font-medium">Share Analytics</h4>
                     <p className="text-slate-400 text-sm">
-                      Help improve CodeHealth by sharing anonymous usage data
+                      Help improve QuantaCode by sharing anonymous usage data
                     </p>
                   </div>
                   <Switch

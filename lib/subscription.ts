@@ -74,10 +74,11 @@ export async function getUserSubscriptionStatus(
     subscriptionStatus: user.subscriptionStatus,
     subscriptionEnd: user.subscriptionEnd,
     subscriptionId: user.subscriptionId,
+    customerId: user.customerId,
   });
 
   // Check if user is admin
-  const isAdmin = user.email === "admin@codehealth.com";
+  const isAdmin = user.email === "admin@quantacode.com";
 
   // Admin gets unlimited access
   if (isAdmin) {
@@ -182,7 +183,46 @@ export async function isUserAdmin(userId: string): Promise<boolean> {
     where: { id: userId },
   });
 
-  return user?.email === "admin@codehealth.com";
+  return user?.email === "admin@quantacode.com";
+}
+
+// Enhanced user lookup function for webhooks
+export async function findUserByStripeData(
+  customerId?: string,
+  email?: string,
+  subscriptionId?: string
+): Promise<any> {
+  console.log(`🔍 Looking up user with:`, {
+    customerId,
+    email,
+    subscriptionId,
+  });
+
+  let user = null;
+
+  // Try multiple lookup strategies
+  const lookupStrategies = [
+    // 1. By customer ID
+    customerId ? { customerId } : null,
+    // 2. By subscription ID
+    subscriptionId ? { subscriptionId } : null,
+    // 3. By email
+    email ? { email } : null,
+  ].filter(Boolean);
+
+  for (const strategy of lookupStrategies) {
+    if (strategy) {
+      user = await prisma.user.findFirst({ where: strategy });
+      if (user) {
+        console.log(
+          `✅ Found user by ${Object.keys(strategy)[0]}: ${user.email}`
+        );
+        break;
+      }
+    }
+  }
+
+  return user;
 }
 
 // Revenue tracking functions
@@ -198,20 +238,28 @@ export async function trackRevenueEvent(eventData: {
   description?: string;
   metadata?: any;
 }) {
-  return await prisma.revenueEvent.create({
-    data: {
-      type: eventData.type,
-      amount: eventData.amount,
-      currency: eventData.currency || "usd",
-      userId: eventData.userId,
-      stripeEventId: eventData.stripeEventId,
-      stripeCustomerId: eventData.stripeCustomerId,
-      stripeSubscriptionId: eventData.stripeSubscriptionId,
-      stripeInvoiceId: eventData.stripeInvoiceId,
-      description: eventData.description,
-      metadata: eventData.metadata ? JSON.stringify(eventData.metadata) : null,
-    },
-  });
+  try {
+    return await prisma.revenueEvent.create({
+      data: {
+        type: eventData.type,
+        amount: eventData.amount,
+        currency: eventData.currency || "usd",
+        userId: eventData.userId,
+        stripeEventId: eventData.stripeEventId,
+        stripeCustomerId: eventData.stripeCustomerId,
+        stripeSubscriptionId: eventData.stripeSubscriptionId,
+        stripeInvoiceId: eventData.stripeInvoiceId,
+        description: eventData.description,
+        metadata: eventData.metadata
+          ? JSON.stringify(eventData.metadata)
+          : null,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to track revenue event:", error);
+    // Don't throw error to avoid breaking webhook processing
+    return null;
+  }
 }
 
 // Admin analytics functions

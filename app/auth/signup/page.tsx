@@ -100,7 +100,7 @@ export default function SignUpPage() {
               Create Account
             </CardTitle>
             <CardDescription className="text-slate-400">
-              Join CodeHealth to start monitoring your repositories
+              Join QuantaCode to start monitoring your repositories
             </CardDescription>
           </CardHeader>
 

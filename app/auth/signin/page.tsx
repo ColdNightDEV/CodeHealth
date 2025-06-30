@@ -97,7 +97,7 @@ export default function SignInPage() {
             </div>
             <CardTitle className="text-2xl text-white">Welcome Back</CardTitle>
             <CardDescription className="text-slate-400">
-              Sign in to your CodeHealth account
+              Sign in to your QuantaCode account
             </CardDescription>
           </CardHeader>
 

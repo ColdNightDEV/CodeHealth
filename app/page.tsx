@@ -125,7 +125,7 @@ export default function LandingPage() {
           <nav className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Activity className="h-7 w-7 text-purple-400 sm:h-8 sm:w-8" />
-              <span className="text-xl font-bold sm:text-2xl">CodeHealth</span>
+              <span className="text-xl font-bold sm:text-2xl">QuantaCode</span>
             </div>
             <div className="flex space-x-2 sm:space-x-4">
               <Link href="/auth/signin">
@@ -341,7 +341,7 @@ export default function LandingPage() {
               Ready to Improve Your Code Health?
             </h2>
             <p className="text-base md:text-xl text-gray-300 mb-8">
-              Join thousands of developers who trust CodeHealth to maintain
+              Join thousands of developers who trust QuantaCode to maintain
               better codebases.
             </p>
             <Link href="/auth/signup">
