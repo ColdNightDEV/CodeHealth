@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Subscription fields
+  subscriptionStatus String   @default("free") // free, premium, cancelled
+  subscriptionId     String?
+  customerId         String?
+  subscriptionStart  DateTime?
+  subscriptionEnd    DateTime?
+  
+  projects Project[]
+  voiceChats VoiceChat[]
+  audioSummaries AudioSummary[]
+  revenueEvents RevenueEvent[]
+  
+  @@map("users")
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  repoUrl     String
+  owner       String?
+  repo        String?
+  language    String?
+  stars       Int      @default(0)
+  forks       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  
+  analyses Analysis[]
+  voiceChats VoiceChat[]
+  audioSummaries AudioSummary[]
+  
+  @@map("projects")
+}
+
+model Analysis {
+  id                    String   @id @default(cuid())
+  documentationScore    Int      @default(0)
+  dependencyScore       Int      @default(0)
+  codeQualityScore      Int      @default(0)
+  securityScore         Int      @default(0)
+  testCoverageScore     Int      @default(0)
+  overallHealthScore    Int      @default(0)
+  
+  // Detailed analysis data
+  issues                String   @default("[]") // JSON string
+  recommendations       String   @default("[]") // JSON string
+  strengths             String   @default("[]") // JSON string
+  
+  // File analysis
+  totalFiles            Int      @default(0)
+  linesOfCode           Int      @default(0)
+  documentedFunctions   Int      @default(0)
+  totalFunctions        Int      @default(0)
+  
+  // Dependencies
+  totalDependencies     Int      @default(0)
+  outdatedDependencies  Int      @default(0)
+  vulnerabilities       Int      @default(0)
+  
+  // AI insights
+  aiSummary             String?
+  complexityAnalysis    String?
+  improvementPlan       String?
+  
+  status                String   @default("pending") // pending, analyzing, completed, failed
+  createdAt             DateTime @default(now())
+  
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  
+  @@map("analyses")
+}
+
+model VoiceChat {
+  id          String   @id @default(cuid())
+  message     String
+  response    String
+  audioUrl    String?
+  duration    Int?     // in seconds
+  createdAt   DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  
+  @@map("voice_chats")
+}
+
+model AudioSummary {
+  id          String   @id @default(cuid())
+  title       String
+  content     String
+  audioUrl    String
+  duration    Int?     // in seconds
+  voiceType   String   @default("robotic") // robotic, premium
+  createdAt   DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  
+  @@map("audio_summaries")
+}
+
+model RevenueEvent {
+  id                String   @id @default(cuid())
+  type              String   // subscription_created, payment_succeeded, subscription_cancelled, refund, etc.
+  amount            Int      // Amount in cents
+  currency          String   @default("usd")
+  stripeEventId     String?  @unique
+  stripeCustomerId  String?
+  stripeSubscriptionId String?
+  stripeInvoiceId   String?
+  description       String?
+  metadata          String?  // JSON string for additional data
+  createdAt         DateTime @default(now())
+  
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String?
+  
+  @@map("revenue_events")
+}
