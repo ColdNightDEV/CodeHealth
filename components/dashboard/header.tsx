@@ -43,7 +43,7 @@ export function DashboardHeader() {
   };
 
   // Check if user is admin
-  const isAdmin = session?.user?.email === "admin@QuantaCode.com";
+  const isAdmin = session?.user?.email === "admin@quantacode.com";
 
   const navigationItems = [
     {

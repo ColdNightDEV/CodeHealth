@@ -151,7 +151,7 @@ export default function AdminPage() {
 
     if (status === "authenticated") {
       // Check if user is admin
-      if (session?.user?.email !== "admin@QuantaCode.com") {
+      if (session?.user?.email !== "admin@quantacode.com") {
         router.push("/dashboard");
         toast.error("Access denied. Admin privileges required.");
         return;
